@@ -67,6 +67,17 @@ jobs:
           ls -la apps/shell/release/
           find apps/shell/release -name "*.deb" | sort
 
+      - name: Resolve Debian artifact path
+        id: deb_artifact
+        run: |
+          artifact_path="$(find apps/shell/release -maxdepth 1 -type f -name 'genoffice_*_arm64.deb' | sort | tail -n 1)"
+          if [ -z "$artifact_path" ]; then
+            echo "::error::No ARM64 Debian artifact found in apps/shell/release"
+            exit 1
+          fi
+          echo "artifact_path=$artifact_path" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$(basename "$artifact_path")" >> "$GITHUB_OUTPUT"
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -75,9 +86,9 @@ jobs:
           body: |
             Automatic build of GenOffice Debian ARM package.
 
-            - genoffice_${{ github.event.inputs.version }}_arm64.deb
+            - ${{ steps.deb_artifact.outputs.artifact_name }}
             - Built from commit ${{ github.sha }} on native ARM64 runner
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: apps/shell/release/genoffice_${{ github.event.inputs.version }}_arm64.deb
+          files: ${{ steps.deb_artifact.outputs.artifact_path }}

@@ -4,7 +4,20 @@ const path = require('path');
 const configPath = path.join(__dirname, '..', 'apps', 'shell', 'electron-builder.cjs');
 let content = fs.readFileSync(configPath, 'utf8');
 
-function replaceObjectBlock(source, blockName, replacement) {
+function findMatchingBracket(source, start, openChar, closeChar, context) {
+  let depth = 0;
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === openChar) depth += 1;
+    if (ch === closeChar) {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  throw new Error(`Could not find closing ${closeChar} for ${context} in ${configPath}`);
+}
+
+function replaceObjectBlock(source, blockName, replacer) {
   const blockStart = `${blockName}:`;
   const start = source.indexOf(blockStart);
   if (start === -1) {
@@ -16,60 +29,59 @@ function replaceObjectBlock(source, blockName, replacement) {
     throw new Error(`Could not find opening brace for ${blockName} block in ${configPath}`);
   }
 
-  let depth = 0;
-  let closeBrace = -1;
-  for (let i = openBrace; i < source.length; i += 1) {
-    const ch = source[i];
-    if (ch === '{') depth += 1;
-    if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        closeBrace = i;
-        break;
-      }
-    }
-  }
-
-  if (closeBrace === -1) {
-    throw new Error(`Could not find closing brace for ${blockName} block in ${configPath}`);
-  }
-
+  const closeBrace = findMatchingBracket(source, openBrace, '{', '}', `${blockName} block`);
   const commaIndex = source.indexOf(',', closeBrace);
   if (commaIndex === -1) {
     throw new Error(`Could not find trailing comma for ${blockName} block in ${configPath}`);
   }
 
+  const block = source.slice(start, commaIndex + 1);
+  const replacement = replacer(block);
   return source.slice(0, start) + replacement + source.slice(commaIndex + 1);
 }
 
-// Replace linux block: only deb for arm64.
-content = replaceObjectBlock(
-  content,
-  'linux',
-  `linux: {
-  target: [
-    { target: 'deb', arch: ['arm64'] }
-  ],
-  executableName: 'genoffice',
-  syncDesktopName: true,
-  extraResources: [
-    {
-      from: '../sheets/native/xlsx-engine/target/release/xlsx-sidecar',
-      to: 'native/xlsx-sidecar',
-    },
-  ],
- },`
+function replaceArrayProperty(block, propertyName, replacement) {
+  const propStart = block.indexOf(`${propertyName}:`);
+  if (propStart === -1) {
+    throw new Error(`Could not find ${propertyName} property in block:\n${block}`);
+  }
+
+  const arrayStart = block.indexOf('[', propStart);
+  if (arrayStart === -1) {
+    throw new Error(`Could not find array opening bracket for ${propertyName} in block:\n${block}`);
+  }
+
+  const arrayEnd = findMatchingBracket(block, arrayStart, '[', ']', `${propertyName} property`);
+  const commaIndex = block.indexOf(',', arrayEnd);
+  if (commaIndex === -1) {
+    throw new Error(`Could not find trailing comma for ${propertyName} in block:\n${block}`);
+  }
+
+  return block.slice(0, propStart) + replacement + block.slice(commaIndex + 1);
+}
+
+function replaceStringProperty(block, propertyName, replacementValueLiteral) {
+  const regex = new RegExp(`(${propertyName}:\\s*)['"\`][^'"\`]*['"\`]`);
+  if (!regex.test(block)) {
+    throw new Error(`Could not find string property ${propertyName} in block:\n${block}`);
+  }
+  return block.replace(regex, `$1${replacementValueLiteral}`);
+}
+
+// Patch linux target only so maintainer/vendor/category/icon and any future metadata stay intact.
+content = replaceObjectBlock(content, 'linux', (linuxBlock) =>
+  replaceArrayProperty(
+    linuxBlock,
+    'target',
+    `target: [
+      { target: 'deb', arch: ['arm64'] },
+    ],`,
+  ),
 );
 
-// Replace deb block: use electron-builder ${version} placeholder.
-// Backslash-escape the dollar to write literal ${version} into the file.
-content = replaceObjectBlock(
-  content,
-  'deb',
-  `deb: {
-  artifactName: 'genoffice_\${version}_arm64.deb',
-  packageName: 'genoffice',
- },`
+// Patch only deb artifact name for ARM output naming.
+content = replaceObjectBlock(content, 'deb', (debBlock) =>
+  replaceStringProperty(debBlock, 'artifactName', "'genoffice_${version}_arm64.deb'"),
 );
 
 fs.writeFileSync(configPath, content);
