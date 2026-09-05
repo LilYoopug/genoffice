@@ -1,6 +1,5 @@
 name: Build Debian ARM Release
 
-# Run this workflow manually to build and release Debian ARM package
 on:
   workflow_dispatch:
     inputs:
@@ -15,35 +14,35 @@ permissions:
 
 jobs:
   build-debian-arm:
-    runs-on: ubuntu-24.04-arm  # Native ARM64 runner
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:
       GENOFFICE_RELEASE_VERSION: ${{ github.event.inputs.version }}
-      
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: stable
 
-      - name: Install dependencies
+      - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libnss3-dev libxss-dev libasound2-dev libuuid1
 
-      - name: Install Node dependencies
+      - name: Install Node deps
         run: npm ci
 
       - name: Build all frontend modules
@@ -58,43 +57,7 @@ jobs:
           cargo build --release
 
       - name: Patch electron-builder config for ARM64 only
-        run: |
-          node -e "
-            const fs = require('fs');
-            const path = require('path');
-            const configPath = path.join(__dirname, 'apps', 'shell', 'electron-builder.cjs');
-            let content = fs.readFileSync(configPath, 'utf8');
-            
-            // Replace linux target to only build deb for arm64
-            content = content.replace(
-              /linux:\s*\{[^}]*target:\s*\[[^\]]*\][^}]*\}/s,
-              \`linux: {
-                target: [
-                  { target: 'deb', arch: ['arm64'] }
-                ],
-                executableName: 'genoffice',
-                syncDesktopName: true,
-                extraResources: [
-                  {
-                    from: '../sheets/native/xlsx-engine/target/release/xlsx-sidecar',
-                    to: 'native/xlsx-sidecar',
-                  },
-                ],
-              }\`
-            );
-            
-            // Update deb artifactName to arm64
-            content = content.replace(
-              /deb:\s*\{[^}]*artifactName:\s*'[^']*'[^}]*\}/s,
-              \`deb: {
-                artifactName: 'genoffice_\${version}_arm64.deb',
-                packageName: 'genoffice',
-              }\`
-            );
-            
-            fs.writeFileSync(configPath, content);
-            console.log('Patched electron-builder config for ARM64');
-          "
+        run: node scripts/patch-electron-builder-arm64.js
 
       - name: Build Debian ARM package
         run: npm run dist:linux -w @genoffice/shell
@@ -102,20 +65,18 @@ jobs:
       - name: List build artifacts
         run: |
           ls -la apps/shell/release/
-          find apps/shell/release -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" | sort
+          find apps/shell/release -name "*.deb" | sort
 
-      - name: Upload Debian ARM artifact to release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: GenOffice v${{ github.event.inputs.version }} (Debian ARM)
           body: |
             Automatic build of GenOffice Debian ARM package.
-            
-            This release contains:
+
             - genoffice_${{ github.event.inputs.version }}_arm64.deb
-            
-            Built from commit ${{ github.sha }} on native ARM64 runner
+            - Built from commit ${{ github.sha }} on native ARM64 runner
           draft: false
           prerelease: false
           generate_release_notes: true
