@@ -81,7 +81,7 @@ content = replaceObjectBlock(content, 'linux', (linuxBlock) =>
 
 // Patch only deb artifact name for ARM output naming.
 content = replaceObjectBlock(content, 'deb', (debBlock) =>
-  replaceStringProperty(debBlock, 'artifactName', "'genoffice_\\${version}_arm64.deb'"),
+  replaceStringProperty(debBlock, 'artifactName', "'genoffice_${version}_arm64.deb'"),
 );
 
 fs.writeFileSync(configPath, content);
