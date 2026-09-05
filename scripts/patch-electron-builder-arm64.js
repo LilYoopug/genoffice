@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const configPath = path.join(__dirname, 'apps', 'shell', 'electron-builder.cjs');
+const configPath = path.join(__dirname, '..', 'apps', 'shell', 'electron-builder.cjs');
 let content = fs.readFileSync(configPath, 'utf8');
 
 // Replace linux block: only deb for arm64
