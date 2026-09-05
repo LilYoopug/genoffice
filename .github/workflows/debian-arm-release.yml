@@ -15,10 +15,9 @@ permissions:
 
 jobs:
   build-debian-arm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm  # Native ARM64 runner - no cross-compilation needed
     timeout-minutes: 60
     env:
-      # Set version from workflow input
       GENOFFICE_RELEASE_VERSION: ${{ github.event.inputs.version }}
       
     steps:
@@ -38,27 +37,12 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07
         with:
           toolchain: stable
-          targets: aarch64-unknown-linux-gnu
 
-      - name: Install cargo dependencies for cross-compilation
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get install -y libgtk-3-dev libnss3-dev libxss-dev libasound2-dev libuuid1
 
-      - name: Build xlsx-sidecar for ARM64
-        run: |
-          cd apps/sheets/native/xlsx-engine
-          cargo build --target aarch64-unknown-linux-gnu --release
-        
-      - name: Setup build environment for electron-builder
-        run: |
-          # Create a symlink so electron-builder finds the ARM64 build
-          # electron-builder looks in target/release/ for the sidecar
-          # We need to make it think the ARM64 build is the host-native one
-          mkdir -p target
-          ln -sf target/aarch64-unknown-linux-gnu/release target/release
-        
       - name: Install Node dependencies
         run: npm ci
 
@@ -68,60 +52,20 @@ jobs:
       - name: Generate third-party notices
         run: npm run notices
 
-      - name: Build Debian ARM package
-        env:
-          # Override the linux target to only build deb for arm64
-          # We'll modify the electron-builder config via environment
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      - name: Build xlsx-sidecar (native ARM64)
         run: |
-          # Temporarily modify electron-builder config to target only arm64 deb
-          node -e "
-            const fs = require('fs');
-            const path = require('path');
-            const configPath = path.join(__dirname, 'apps', 'shell', 'electron-builder.cjs');
-            let content = fs.readFileSync(configPath, 'utf8');
-            
-            // Replace the linux target to only build deb for arm64
-            content = content.replace(
-              /linux:\s*{\s*[^}]*target:\s*\[[^\]]*\][^}]*}/,
-              `linux: {
-                target: [
-                  { target: 'deb', arch: ['arm64'] }
-                ],
-                executableName: 'genoffice',
-                syncDesktopName: true,
-                extraResources: [
-                  {
-                    from: '../sheets/native/xlsx-engine/target/release/xlsx-sidecar',
-                    to: 'native/xlsx-sidecar',
-                  },
-                ],
-              }`
-            );
-            
-            // Also update the deb artifactName to use arm64
-            content = content.replace(
-              /deb:\s*{\s*[^}]*artifactName:\s*'[^']*'[^}]*}/,
-              `deb: {
-                artifactName: 'genoffice_\${version}_arm64.deb',
-                packageName: 'genoffice',
-              }`
-            );
-            
-            fs.writeFileSync(configPath, content);
-          "
-          
-          # Now run the dist:linux script which will build our modified config
-          npm run dist:linux
+          cd apps/sheets/native/xlsx-engine
+          cargo build --release
+
+      - name: Build Debian ARM package
+        run: npm run dist:linux
 
       - name: List build artifacts
         run: |
           find release -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" | sort
           ls -la release/
 
-      - name: Create GitHub Release
-        id: create_release
+      - name: Upload Debian ARM artifact
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.event.inputs.version }}
@@ -132,13 +76,8 @@ jobs:
             This release contains:
             - genoffice_${{ github.event.inputs.version }}_arm64.deb
             
-            Built from commit ${{ github.sha }}
+            Built from commit ${{ github.sha }} on native ARM64 runner
           draft: false
           prerelease: false
           generate_release_notes: true
-
-      - name: Upload Debian ARM artifact
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.event.inputs.version }}
-          file: release/genoffice_${{ github.event.inputs.version }}_arm64.deb
+          files: release/genoffice_${{ github.event.inputs.version }}_arm64.deb
